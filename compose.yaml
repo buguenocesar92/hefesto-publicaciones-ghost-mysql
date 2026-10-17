@@ -1,0 +1,87 @@
+name: hefesto-publicaciones
+services:
+  db:
+    image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Generar clave root}
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Generar clave app}
+    volumes:
+      - mysql:/var/lib/mysql
+      - ./ops:/opt/hefesto:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u"$$MYSQL_USER" "$$MYSQL_DATABASE" -Nse "SELECT 1" >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+  preflight:
+    image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost_app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      HEFESTO_BOOTSTRAP: "false"
+      INITIAL_SETUP_COMPLETE: ${INITIAL_SETUP_COMPLETE:-false}
+    volumes:
+      - ./ops:/opt/hefesto:ro
+    networks: [backend]
+    entrypoint: [sh, /opt/hefesto/preflight.sh]
+  app:
+    image: ghost:6.70.0@sha256:30bf2aaadd3b35c3ffb99d2d4c69418da33f9711ffdca706626fe91e4dc92688
+    restart: unless-stopped
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    entrypoint: [sh, /opt/hefesto/start.sh]
+    environment:
+      NODE_ENV: production
+      url: ${PUBLIC_URL:-https://publicaciones.example.com}
+      database__client: mysql
+      database__connection__host: db
+      database__connection__port: "3306"
+      database__connection__user: ghost_app
+      database__connection__password: ${MYSQL_PASSWORD}
+      database__connection__database: ghost
+      mail__transport: SMTP
+      mail__from: ${MAIL_FROM:-noreply@example.com}
+      mail__options__host: ${SMTP_HOST:-smtp.example.com}
+      mail__options__port: "465"
+      mail__options__secure: "true"
+      mail__options__auth__user: ${SMTP_USERNAME:-}
+      mail__options__auth__pass: ${SMTP_PASSWORD:-}
+      HEFESTO_BOOTSTRAP: "false"
+      SMTP_READY: ${SMTP_READY:-false}
+    expose: ["2368"]
+    volumes:
+      - content:/var/lib/ghost/content
+      - ./ops:/opt/hefesto:ro
+    networks: [frontend, backend]
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+  filetools:
+    image: ghost:6.70.0@sha256:30bf2aaadd3b35c3ffb99d2d4c69418da33f9711ffdca706626fe91e4dc92688
+    profiles: [tools]
+    user: "0"
+    volumes:
+      - content:/restore-content
+    networks: [backend]
+volumes:
+  mysql:
+    name: ${VOLUME_PREFIX:-hefesto-publicaciones}-mysql
+  content:
+    name: ${VOLUME_PREFIX:-hefesto-publicaciones}-content
+networks:
+  frontend:
+  backend:
+    internal: true
