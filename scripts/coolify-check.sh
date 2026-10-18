@@ -3,8 +3,10 @@
 #   1. Servicios sin `profiles` no exponen puertos ni poder sobre el host.
 #   2. Nombres estables sin forzar (sin `name:` fijo a nivel raíz ni en
 #      volúmenes o redes).
-# El contrato completo y los motivos de cada regla viven en
-# docs/superpowers/plans/*.md; este script es solo el guardián automatizable.
+#
+# El contrato completo y los motivos de cada regla viven en la sección
+# «Despliegue en Coolify (MVP Hefesto)» del README; este script es solo el
+# guardián automatizable.
 #
 # jq no distingue los `name:` declarados en el fuente de los que Docker
 # Compose auto-asigna a partir del nombre del proyecto, así que el chequeo de
@@ -89,14 +91,18 @@ fi
 # "<project>_<key>" y no se puede distinguir del declarado.
 # ---------------------------------------------------------------------------
 NAMES_BAD=$(python3 - "$COMPOSE_FILE" <<'PY'
-import sys, yaml
+import sys, yaml, re
 src = sys.argv[1]
 with open(src) as f:
     doc = yaml.safe_load(f) or {}
 violations = []
+# Los volumenes pueden fijar `name:` si parametrizan con ${VOLUME_PREFIX}
+# (con valor por defecto) para no cambiar el nombre real entre despliegues.
 for key, val in (doc.get("volumes") or {}).items():
     if isinstance(val, dict) and val.get("name"):
-        violations.append(f"volumen {key}:{val['name']}")
+        name_val = str(val["name"])
+        if not re.search(r"\$\{VOLUME_PREFIX", name_val):
+            violations.append(f"volumen {key}:{name_val}")
 for key, val in (doc.get("networks") or {}).items():
     if isinstance(val, dict) and val.get("name"):
         violations.append(f"red {key}:{val['name']}")
@@ -116,6 +122,7 @@ fi
 # ---------------------------------------------------------------------------
 BIND_BAD=$(python3 - "$COMPOSE_FILE" <<'PY'
 import sys, yaml, re
+from pathlib import PurePosixPath
 src = sys.argv[1]
 with open(src) as f:
     doc = yaml.safe_load(f) or {}
@@ -132,7 +139,9 @@ for svc, conf in (doc.get("services") or {}).items():
             continue
         if not src_path:
             continue
-        if src_path.startswith("/") or src_path.startswith("~") or "docker.sock" in src_path:
+        if (src_path.startswith("/") or src_path.startswith("~")
+                or "docker.sock" in src_path
+                or ".." in PurePosixPath(src_path).parts):
             bad.append(f"{svc}:bind fuera del repo -> {src_path}")
 print("\n".join(bad))
 PY
@@ -145,36 +154,34 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3.d) Por cada servicio sin `profiles`, validar el contrato del punto 1.
+# Tras `to_entries[]` el flujo expone `{key, value}`; cada campo del servicio
+# se accede con `.value.<campo>` para no leer el envoltorio. Se acumulan las
+# coincidencias en un array y se emite "servicio:campo1,campo2" si hay alguna.
 # ---------------------------------------------------------------------------
 SERV_BAD=$(echo "$RENDER" | jq -r '
   .services // {}
   | to_entries[]
   | select((.value.profiles // []) | length == 0)
   | .key as $svc
-  | (
-      (if .ports                       != null then "ports"                       else empty end),
-      (if .container_name              != null then "container_name"              else empty end),
-      (if .privileged                  == true then "privileged"                  else empty end),
-      (if .cap_add                     != null then "cap_add"                     else empty end),
-      (if .devices                     != null then "devices"                     else empty end),
-      (if .network_mode                == "host" then "network_mode:host"          else empty end),
-      (if .pid                         == "host" then "pid:host"                   else empty end),
-      (if .ipc                         == "host" then "ipc:host"                   else empty end),
-      (if (.security_opt // [])        | index("unconfined")      then "security_opt:unconfined" else empty end)
-    ) as $bad
+  | [
+      (if .value.ports                       != null then "ports"                       else empty end),
+      (if .value.container_name              != null then "container_name"              else empty end),
+      (if .value.privileged                  == true then "privileged"                  else empty end),
+      (if .value.cap_add                     != null then "cap_add"                     else empty end),
+      (if .value.devices                     != null then "devices"                     else empty end),
+      (if .value.network_mode                == "host" then "network_mode:host"          else empty end),
+      (if .value.pid                         == "host" then "pid:host"                   else empty end),
+      (if .value.ipc                         == "host" then "ipc:host"                   else empty end),
+      (if (.value.security_opt // []) | any(.[]; test("unconfined")) then "security_opt:unconfined" else empty end)
+    ] as $bad
   | select(($bad | length) > 0)
-  | "\($svc):\($bad | join(","))"
+  | "\($svc): \($bad | join(","))"
 ')
 if [ -n "$SERV_BAD" ]; then
   while IFS= read -r line; do
     report "compose: $line"
   done <<< "$SERV_BAD"
 fi
-
-# ---------------------------------------------------------------------------
-# 3.f) Eliminado: el chequeo de binds pasó al YAML fuente arriba para evitar
-# falsos positivos por la normalización de paths relativos a absolutos.
-# ---------------------------------------------------------------------------
 
 if [ $FAIL -ne 0 ]; then
   exit 1
