@@ -50,7 +50,7 @@ services:
       database__connection__user: ghost_app
       database__connection__password: ${MYSQL_PASSWORD}
       database__connection__database: ghost
-      mail__transport: ${MAIL_TRANSPORT:-SMTP}
+      mail__transport: SMTP
       mail__from: ${MAIL_FROM:-noreply@example.com}
       mail__options__host: ${SMTP_HOST:-}
       mail__options__port: ${SMTP_PORT:-465}
@@ -65,7 +65,11 @@ services:
       - ./ops:/opt/hefesto:ro
     networks: [frontend, backend]
     healthcheck:
-      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:2368/ghost/api/admin/site/ >/dev/null 2>&1 || exit 1']
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get({host:'127.0.0.1',port:2368,path:'/ghost/api/admin/site/',headers:{'X-Forwarded-Proto':'https'}},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
@@ -83,7 +87,9 @@ services:
     networks: [backend]
 volumes:
   mysql:
+    name: ${VOLUME_PREFIX:-hefesto-publicaciones}-mysql
   content:
+    name: ${VOLUME_PREFIX:-hefesto-publicaciones}-content
 networks:
   frontend:
   backend:
