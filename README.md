@@ -10,3 +10,23 @@ Empiece por docs/instalacion.md. Requisitos: Docker/Compose v2, Python 3.11+, do
 **Estado:** revisión estática y pruebas locales de scripts; no se ejecutó Ghost, MySQL ni Docker. Pendiente validar instalación y restauración en infraestructura real. No hay sitio publicado ni correos enviados a terceros.
 
 Alcance editorial: no se configura Stripe, newsletter masiva Mailgun, ActivityPub ni analítica Tinybird. Los ejemplos editoriales son plantillas manuales; no son publicaciones ya cargadas.
+
+## Despliegue en Coolify (MVP Hefesto)
+
+Importe el repositorio en Coolify con build pack **Docker Compose**, apunte al
+`compose.yaml` de la raíz y exponga el servicio `app` en el puerto interno
+`2368`. Coolify/Traefik se encargan de TLS y del dominio; no use `ports:` en
+el compose ni agregue Caddy/nginx propios.
+
+Variables de entorno obligatorias para Coolify: `MYSQL_ROOT_PASSWORD`,
+`MYSQL_PASSWORD`, `PUBLIC_URL` (HTTPS), `MAIL_FROM`, `SMTP_HOST`,
+`SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_READY` y `INITIAL_SETUP_COMPLETE`.
+Las nuevas variables opcionales para el contrato MVP son `MAIL_TRANSPORT`
+(por defecto `SMTP`), `SMTP_PORT` (465), `SMTP_SECURE` (`true`). Si todavía
+no hay SMTP real, deje `SMTP_READY=false`: el arranque desactiva el correo
+transaccional en lugar de abortar.
+
+El servicio `app` ya no fija `name:` a nivel de compose ni en volúmenes/redes:
+Coolify asigna el nombre de proyecto y los nombres de volúmenes según sus
+convenciones. La red `backend` permanece interna para que MySQL no quede
+expuesta.
