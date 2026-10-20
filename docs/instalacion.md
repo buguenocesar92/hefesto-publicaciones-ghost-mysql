@@ -10,7 +10,7 @@
 9. Retire Mailpit con `docker compose -f compose.yaml -f compose.bootstrap.yaml rm -sf mailpit`. Sus mensajes de prueba se eliminan. Confirme que puertos 8099 y 8027 ya no estén publicados.
 
 ## Coolify
-Importe el directorio completo desde repositorio privado o servidor, monte ops y conserve variables y nombres de volumen. Use el mismo nombre Compose en bootstrap y producción. Mantenga backend interno para MySQL y conecte el proxy a frontend de app. No publique 3306. El proxy debe enviar X-Forwarded-Proto=https y preservar Host/X-Forwarded-Host.
+Importe el directorio completo desde repositorio privado o servidor, monte ops y conserve variables y nombres de volumen (`VOLUME_PREFIX`). Si re-despliega con un `VOLUME_PREFIX` distinto, Compose creará volúmenes con otro nombre y los datos previos quedarán huérfanos. Use el mismo nombre Compose (o `-p <proyecto>` igual al de Coolify) en bootstrap y producción. Mantenga backend interno para MySQL y conecte el proxy a frontend de app. No publique 3306. El proxy debe enviar X-Forwarded-Proto=https y preservar Host/X-Forwarded-Host.
 
 MySQL y Ghost hablan por red privada Docker del mismo servidor; este kit no configura TLS entre contenedores ni una base remota. Para separar servidores, diseñar TLS y control de red antes de trasladar la DB.
 
