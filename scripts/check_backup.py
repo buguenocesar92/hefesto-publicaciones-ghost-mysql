@@ -13,17 +13,27 @@ from respaldo_contrato import ejecutar, ejecutar_check
 SOFTWARE = "hefesto-publicaciones"
 VERSION = "6.70.0"
 DATABASE = "mysql"
-# Los volumenes con material personal solo viajan cifrados con age: su version
-# en claro jamas puede estar dentro del respaldo.
-PROHIBIDOS = ["content.tar.gz"]
+# El dump y el volumen con material personal solo viajan cifrados con age: su
+# version en claro jamas puede estar dentro del respaldo.
+PROHIBIDOS = ["content.tar.gz", "ghost.sql"]
+# Artefactos que produce el kit: cada uno viaja en el manifiesto o su
+# exclusion esta declarada en "excluidos".
+ESPERADOS = ("env.vars", "ghost.sql.age", "content.tar.gz.age")
+# Artefactos que solo faltan si el manifiesto declara su exclusion.
+EXCLUIBLES = {"dump": "ghost.sql.age", "content": "content.tar.gz.age"}
 
 
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("Uso: python3 scripts/check_backup.py /ruta/respaldo")
-    ejecutar_check(sys.argv[1], SOFTWARE, VERSION, DATABASE, prohibidos=PROHIBIDOS,
-                   requeridos=("ghost.sql", "env.vars"))
+    manifiesto = ejecutar_check(sys.argv[1], SOFTWARE, VERSION, DATABASE,
+                                esperados=ESPERADOS, prohibidos=PROHIBIDOS,
+                                requeridos=("env.vars",), excluibles=EXCLUIBLES)
     print("Manifiesto, checksums y ausencia de secretos en claro verificados.")
+    if manifiesto.get("excluidos"):
+        print("ATENCION: el respaldo declara excluidos: "
+              + ", ".join(manifiesto["excluidos"])
+              + ". Sin receptor age no hay copia cifrada de esos datos.")
     print("No demuestra la recuperacion de la base ni de los volumenes: "
           "hace falta la clave age del receptor.")
     return 0

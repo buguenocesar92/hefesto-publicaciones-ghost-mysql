@@ -4,7 +4,10 @@
 Reglas de material sensible:
 - El .env nunca se copia en claro: solo env.vars y, si hay receptor age, el
   .env cifrado (env.age).
-- El volumen de contenido (adjuntos de las publicaciones) es material personal: viaja cifrado con age o no viaja y el manifiesto lo declara.
+- El dump de la base (cuentas, correos y hashes de contrasena) y el volumen de
+  contenido (adjuntos de las publicaciones) son material personal: viajan
+  cifrados con age o no viajan, y el manifiesto declara cada exclusion.
+  Los permisos restrictivos no son cifrado: no hay dump en claro en disco.
 Ver docs/CONTRATO-RESPALDO.md.
 """
 import datetime
@@ -42,16 +45,25 @@ def main():
                datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
     carpeta.mkdir(parents=True, mode=0o700)
     meta = {}
+    excluidos = []
     try:
         try:
             dc("stop", "app")
-            dump = ('MYSQL_PWD="$MYSQL_PASSWORD" exec mysqldump -u"$MYSQL_USER" '
-                    '--single-transaction --no-tablespaces --set-gtid-purged=OFF '
-                    '--skip-add-drop-table --skip-lock-tables --hex-blob "$MYSQL_DATABASE"')
-            with (carpeta / "ghost.sql").open("wb") as out:
-                dc("exec", "-T", "db", "sh", "-ec", dump, stdout=out)
-
             receptor = receptor_age()
+            if receptor:
+                dump = ('MYSQL_PWD="$MYSQL_PASSWORD" exec mysqldump -u"$MYSQL_USER" '
+                        '--single-transaction --no-tablespaces --set-gtid-purged=OFF '
+                        '--skip-add-drop-table --skip-lock-tables --hex-blob "$MYSQL_DATABASE"')
+                # El dump va del productor a age: nunca toca el disco en claro.
+                cifrar_con_age(
+                    lambda flujo: dc("exec", "-T", "db", "sh", "-ec", dump, stdout=flujo),
+                    carpeta / "ghost.sql.age", receptor)
+                meta["dump"] = "ghost.sql.age (cifrado con age)"
+            else:
+                meta["dump"] = ("excluido: el dump contiene cuentas, correos y hashes de "
+                                "contrasena y no hay receptor age configurado")
+                excluidos.append("dump")
+
             if receptor:
                 cifrar_con_age(
                     lambda flujo: dc("run", "--rm", "--no-deps", "-T", "--entrypoint", "tar",
@@ -62,19 +74,26 @@ def main():
             else:
                 meta["content"] = ("excluido: el volumen de contenido contiene material personal "
                                     "y no hay receptor age configurado")
+                excluidos.append("content")
 
             meta.update(exportar_env(RAIZ, carpeta))
             if (RAIZ / "compose.yaml").is_file():
                 shutil.copy2(RAIZ / "compose.yaml", carpeta / "compose.yaml")
         finally:
             dc("start", "app")
+        meta["excluidos"] = sorted(excluidos)
         artefactos = artefactos_presentes(carpeta)
         escribir_manifiesto(carpeta, SOFTWARE, VERSION, DATABASE, artefactos, extra=meta)
     except Exception:
         marcar_fallido(carpeta, SOFTWARE, VERSION, DATABASE)
         raise
     print("Respaldo completo:", carpeta)
-    print("El .env no viaja en claro: solo cifrado con age o fuera del respaldo.")
+    if excluidos:
+        print("ATENCION: el respaldo NO incluye " + ", ".join(excluidos) +
+              ": no es una copia de la base ni de los adjuntos. "
+              "Configura AGE_RECIPIENT (o SOPS_AGE_RECIPIENT) para respaldarlos.")
+    else:
+        print("El .env, el dump y los adjuntos no viajan en claro: todo cifrado con age.")
     return 0
 
 

@@ -4,6 +4,10 @@
 Sin --confirmar CONFIRMAR_RESTAURACION no se escribe nada; con --dry-run se
 simula. Exige destino vacio, verifica los sha256 del manifiesto y deja
 restore-report.json y registro de auditoria.
+
+El preflight completo (volumenes presentes, descifrado, tar valido, destino
+vacio) se ejecuta ANTES de tocar la base o los volumenes: un preflight que
+falla no deja la base a medias.
 """
 import os
 import subprocess
@@ -21,8 +25,9 @@ DATABASE = "mysql"
 RAIZ = Path(__file__).resolve().parents[1]
 os.chdir(RAIZ)
 os.umask(0o077)
-PROHIBIDOS = ["content.tar.gz"]
-
+PROHIBIDOS = ["content.tar.gz", "ghost.sql"]
+ESPERADOS = ("env.vars", "ghost.sql.age", "content.tar.gz.age")
+EXCLUIBLES = {"dump": "ghost.sql.age", "content": "content.tar.gz.age"}
 
 
 def dc(*args, **kw):
@@ -33,7 +38,8 @@ def main():
     modo, origen = opciones_restore(sys.argv[1:])
     origen = Path(origen).resolve()
     manifiesto = ejecutar_check(str(origen), SOFTWARE, VERSION, DATABASE,
-                                prohibidos=PROHIBIDOS, requeridos=("ghost.sql", "env.vars"))
+                                esperados=ESPERADOS, prohibidos=PROHIBIDOS,
+                                requeridos=("env.vars",), excluibles=EXCLUIBLES)
     if modo == "dry-run":
         print("Simulacion: checksums integros; no demuestra descifrado ni recuperacion.")
         return 0
@@ -42,11 +48,17 @@ def main():
 
 
 def restaurar(origen):
+    dump_cifrado = origen / "ghost.sql.age"
+    if not dump_cifrado.is_file():
+        raise RespaldoError("El respaldo no trae ghost.sql.age; no se restaura", 5)
     cifrado = origen / "content.tar.gz.age"
     if not cifrado.is_file():
         raise RespaldoError("El respaldo no trae content.tar.gz.age; no se restaura", 5)
-    # Ninguna importacion de SQL hasta validar y descifrar TODO el contenido.
+    # Preflight completo antes de cualquier mutacion: descifrar y validar el
+    # tar, y comprobar el destino. Ninguna importacion de SQL ocurre antes.
     with tempfile.TemporaryDirectory(prefix="hefesto-restore-") as d:
+        dump_plano = Path(d) / "ghost.sql"
+        descifrar_con_age(dump_cifrado, dump_plano)
         plano = Path(d) / "content.tar.gz"
         descifrar_con_age(cifrado, plano)
         validar_tar(plano)
@@ -66,7 +78,7 @@ def restaurar(origen):
                         capture_output=True, text=True).stdout.strip()
         if encontrado:
             raise RespaldoError("El volumen content del destino no esta vacio", 5)
-        with (origen / "ghost.sql").open("rb") as f:
+        with dump_plano.open("rb") as f:
             dc("exec", "-T", "db", "sh", "-ec",
                'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u"$MYSQL_USER" "$MYSQL_DATABASE"', stdin=f)
         with plano.open("rb") as f:
